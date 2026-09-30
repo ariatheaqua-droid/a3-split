@@ -107,9 +107,10 @@ details ul{margin:8px 0 0;padding-left:1.2em}
     <div class="tiles" id="tiles"></div>
   </div>
   <div class="actions">
-    <button type="button" class="btn primary" id="share">Claudeへ共有</button>
+    <div class="actions" id="sharebtns"></div>
+    <button type="button" class="btn" id="pdf">PDF1つにまとめて共有</button>
     <button type="button" class="btn" id="copy">説明文だけコピー</button>
-    <p class="hint" id="sharehint">共有シートで「Claude」を選んでください。共有と同時に説明文がコピーされるので、Claudeの入力欄に貼り付けてから質問を続けてください。写真アプリに残したい時は「画像を保存」を選びます。</p>
+    <p class="hint" id="sharehint">共有シートで「Claude」を選んでください。一度に送れる枚数に限りがあるので、5枚ずつボタンを分けてあります。最初の共有で説明文がコピーされるので、Claudeの入力欄に貼り付けてください。PCのClaude Codeに送る時は「PDF1つにまとめて共有」なら1回で済みます。写真アプリに残したい時は「画像を保存」を選びます。</p>
   </div>
 </section>
 
@@ -127,7 +128,7 @@ details ul{margin:8px 0 0;padding-left:1.2em}
 
 <script>
 // Claudeの高解像度入力の上限（長辺2576px・約4784トークン≒3.5MP）に余裕を持たせた値
-const LONG = 2576, AREA = 3.4e6, OV = 0.08, PDF_MAX_PAGES = 5;
+const LONG = 2576, AREA = 3.4e6, OV = 0.08, PDF_MAX_PAGES = 5, BATCH = 5;
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const ROW_NAMES = {1:[''],2:['上','下'],3:['上','中','下'],4:['上','中上','中下','下']};
 const COL_NAMES = {1:[''],2:['左','右'],3:['左','中','右'],4:['左','中左','中右','右']};
@@ -135,7 +136,10 @@ const COL_NAMES = {1:[''],2:['左','右'],3:['左','中','右'],4:['左','中左
 const $ = id => document.getElementById(id);
 let sources = [];   // {prefix, load: async () => ({el, w, h, dispose})}
 let rot = 0;
-let outputs = [];   // {blob, name, url}
+let outputs = [];   // {blob, name, url, w, h}
+let pdfFile = null; // 共有ボタンを押した瞬間に渡せるよう、処理後すぐ作っておく
+let lastAsPdf = false; // 「説明文だけコピー」を直前の共有方法に合わせる
+const PDF_MAX_IMAGES = 40; // これを超えるとiPhoneのメモリが心配なのでPDFは作らない
 let lastGrid = null;
 let busy = false;
 let loadNote = '';  // 読み込み時の注意（PDFのページ数制限など）
@@ -196,8 +200,9 @@ async function renderPart(s, x, y, w, h, label){
   ctx.textBaseline = 'middle';
   ctx.fillText(label, Math.round(band * 0.4), band / 2);
   const blob = await new Promise((ok, ng) => cv.toBlob(b => b ? ok(b) : ng(new Error('toBlob')), 'image/jpeg', 0.9));
+  const size = {w: cv.width, h: cv.height};
   cv.width = cv.height = 0;   // iOSのキャンバスメモリを早めに解放
-  return blob;
+  return {blob, ...size};
 }
 
 function stamp(){
@@ -208,7 +213,7 @@ function stamp(){
 async function processAll(){
   if (!sources.length || busy) return;
   busy = true; toggle(false);
-  outputs.forEach(o => URL.revokeObjectURL(o.url)); outputs = [];
+  outputs.forEach(o => URL.revokeObjectURL(o.url)); outputs = []; pdfFile = null;
   $('overview').innerHTML = ''; $('tiles').innerHTML = '';
   setWarn('');
   const mode = document.querySelector('input[name=grid]:checked').value;
@@ -227,7 +232,7 @@ async function processAll(){
       if (outScale(tw, th) < 0.9) lowRes = true;
       const n = c * r;
       const ov = await renderPart(s, 0, 0, W, H, `${src.label}全体（${c}列×${r}行に分割）`);
-      outputs.push({blob: ov, name: `a3_${st}_${src.prefix}00_all.jpg`, overview: true, cols: c});
+      outputs.push({...ov, name: `a3_${st}_${src.prefix}00_all.jpg`, overview: true, cols: c});
       let k = 0;
       for (const y of starts(H, th, r)){
         for (const x of starts(W, tw, c)){
@@ -235,7 +240,7 @@ async function processAll(){
           const ri = Math.floor((k - 1) / c), ci = (k - 1) % c;
           const pos = [ROW_NAMES[r][ri] && ROW_NAMES[r][ri] + '段', COL_NAMES[c][ci]].filter(Boolean).join('・');
           const b = await renderPart(s, x, y, tw, th, `${src.label}${k}/${n}${pos ? ' ' + pos : ''}`);
-          outputs.push({blob: b, name: `a3_${st}_${src.prefix}${String(k).padStart(2, '0')}.jpg`, cols: c});
+          outputs.push({...b, name: `a3_${st}_${src.prefix}${String(k).padStart(2, '0')}.jpg`, cols: c});
         }
       }
       } finally { s.dispose(); }
@@ -244,16 +249,19 @@ async function processAll(){
     outputs = []; $('res').hidden = true;
     setStatus('処理に失敗しました。別の写真で試すか、アプリを開き直してください。');
     setWarn(String(e && e.message || e));
-    busy = false; toggle(true); $('share').disabled = $('copy').disabled = true; return;
+    busy = false; toggle(true); $('pdf').disabled = $('copy').disabled = true; return;
   }
   lastGrid = firstGrid;
   outputs.forEach(o => o.url = URL.createObjectURL(o.blob));
+  if (outputs.length <= PDF_MAX_IMAGES){
+    try { pdfFile = new File([await buildPdf(outputs)], `a3_${st}.pdf`, {type: 'application/pdf'}); }
+    catch (e){ pdfFile = null; }
+  }
   showResults();
   const total = outputs.length;
   const sizeMB = outputs.reduce((a, o) => a + o.blob.size, 0) / 1048576;
   setStatus(`${total}枚できました（全体1枚＋拡大${total - sources.length}枚、計${sizeMB.toFixed(1)}MB）。`);
   const warns = loadNote ? [loadNote] : [];
-  if (total > 20) warns.push('Claudeに一度に送れるのは20枚までです。分け方の枚数を減らすか、2回に分けて送ってください。');
   if (lowRes) warns.push('この枚数では1枚あたりが大きすぎるため、少し縮小しています。細かい字が読めない時は枚数を増やしてください。');
   if (firstGrid[0] * firstGrid[1] === 1) warns.push('元の写真が小さいため、分割しなくてもそのまま読める大きさです。細かい字が読めない場合は、紙に近づいて撮り直してください。');
   setWarn(warns.join('\n'));
@@ -276,22 +284,29 @@ function showResults(){
   $('tileslbl').textContent = sources.length > 1
     ? `拡大画像（${sources.length}ページ分、2枚目以降）` : `拡大画像（2枚目以降、左上から右へ）`;
   $('res').hidden = false;
-  const canShare = !!(navigator.canShare && navigator.canShare({files: [new File([outputs[0].blob], outputs[0].name, {type: 'image/jpeg'})]}));
-  $('share').hidden = !canShare;
+  const canShare = !!(navigator.canShare && navigator.canShare({files: [toFile(outputs[0])]}));
+  renderShareButtons(canShare);
+  $('pdf').hidden = !canShare || !pdfFile;
   if (!canShare) $('sharehint').textContent = 'この環境では共有ボタンが使えません。画像をタップして開き、長押しで保存してください。';
 }
 
-function promptText(){
+function promptText(asPdf){
   const [c, r] = lastGrid || [2, 2];
-  const pages = sources.length > 1 ? `全${sources.length}ページ分、ページごとに同じ構成です。` : '';
-  return `A3の紙を撮影し、細かい字まで読めるよう分割した画像を送ります。${pages}` +
-    `各ページとも1枚目が全体図で、続く画像は${c}列×${r}行に分けた拡大画像です（左上から右へ、上の段から下の段への順。各画像の上端の帯に位置を書いてあります）。` +
+  const unit = asPdf ? 'ページ' : '枚';
+  const first = sources.length > 1 ? `元の1ページごとに、最初の1${unit}` : `1${unit}目`;
+  const pages = sources.length > 1 ? `元の資料は全${sources.length}ページ分で、元の1ページごとに同じ構成です。` : '';
+  const how = asPdf
+    ? '分割した画像を1ページ1画像のPDFにまとめて送ります。各ページの画像は縮小せずに読んでください（Claude Codeなら、PDFに埋め込まれたJPEGを取り出して読むと元の解像度のまま読めます）。'
+    : '分割した画像を送ります（枚数が多い時は5枚ずつ分けて送ります）。';
+  return `A3の紙を撮影し、細かい字まで読めるよう${how}${pages}` +
+    `${first}が全体図で、続く画像は${c}列×${r}行に分けた拡大画像です（左上から右へ、上の段から下の段への順。各画像の上端の帯に位置を書いてあります）。` +
     `隣り合う画像は約8%重なっているので、境目の文字・寸法・部材を二重に数えないでください。` +
     `全体図で配置をつかみ、細かい文字や数値は拡大画像を優先して読んでください。`;
 }
 
 function toggle(on){
-  ['rot', 'share', 'copy'].forEach(id => $(id).disabled = !on || !sources.length);
+  ['rot', 'pdf', 'copy'].forEach(id => $(id).disabled = !on || !sources.length);
+  document.querySelectorAll('.sharebtn').forEach(b => b.disabled = !on);
   document.querySelectorAll('input[name=grid], #cam, #file').forEach(el => el.disabled = !on);
 }
 
@@ -364,20 +379,77 @@ $('file').addEventListener('change', onPick);
 document.querySelectorAll('input[name=grid]').forEach(el => el.addEventListener('change', processAll));
 $('rot').addEventListener('click', () => { rot = (rot + 90) % 360; updateRotInfo(); processAll(); });
 
-$('share').addEventListener('click', async () => {
-  const files = outputs.map(o => new File([o.blob], o.name, {type: 'image/jpeg'}));
-  // どちらもタップ直後に呼ぶ必要があるので、コピーの完了は待たずに共有を開く
-  const copied = navigator.clipboard ? navigator.clipboard.writeText(promptText()).then(() => true, () => false) : Promise.resolve(false);
+function toFile(o){ return new File([o.blob], o.name, {type: 'image/jpeg'}); }
+
+function renderShareButtons(canShare){
+  const box = $('sharebtns');
+  box.innerHTML = '';
+  if (!canShare) return;
+  const n = outputs.length;
+  for (let i = 0; i < n; i += BATCH){
+    const end = Math.min(n, i + BATCH);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn sharebtn' + (i === 0 ? ' primary' : '');
+    b.textContent = n <= BATCH ? 'Claudeへ共有' : `${i + 1}〜${end}枚目を共有`;
+    b.addEventListener('click', async () => {
+      if (await shareFiles(outputs.slice(i, end).map(toFile), i === 0, false)){
+        if (!b.textContent.endsWith('（済）')) b.textContent += '（済）';
+        b.classList.remove('primary');
+        const next = [...$('sharebtns').children].find(x => !x.textContent.endsWith('（済）'));
+        if (next) next.classList.add('primary');
+      }
+    });
+    box.appendChild(b);
+  }
+}
+
+// どちらもタップ直後に呼ぶ必要があるので、コピーの完了は待たずに共有を開く
+async function shareFiles(files, withText, asPdf){
+  lastAsPdf = asPdf;
+  const copied = withText && navigator.clipboard
+    ? navigator.clipboard.writeText(promptText(asPdf)).then(() => true, () => false) : Promise.resolve(null);
   try {
     await navigator.share({files});
-    if (await copied) setStatus('共有しました。説明文もコピー済みなので、Claudeの入力欄に貼り付けてください。');
+    const c = await copied;
+    if (c === null) setStatus('共有しました。');
+    else if (c) setStatus('共有しました。説明文もコピー済みなので、Claudeの入力欄に貼り付けてください。');
     else setStatus('共有しました。説明文はコピーできなかったので、「説明文だけコピー」を押してからClaudeに貼り付けてください。');
+    return true;
   } catch (e){
     if (e.name !== 'AbortError') setWarn('共有できませんでした：' + e.message);
+    return false;
   }
-});
+}
+$('pdf').addEventListener('click', () => { if (pdfFile) shareFiles([pdfFile], true, true); });
+
+// JPEGを再圧縮せずに1ページ1枚で埋め込んだPDFを作る（画質は落ちない）
+async function buildPdf(items){
+  const datas = await Promise.all(items.map(it => it.blob.arrayBuffer().then(b => new Uint8Array(b))));
+  const enc = new TextEncoder(), parts = [], offsets = [];
+  let pos = 0;
+  const put = x => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); pos += b.length; };
+  const obj = (id, body) => { offsets[id] = pos; put(`${id} 0 obj\n`); body(); put('\nendobj\n'); };
+  const nObj = 2 + items.length * 3;
+  put('%PDF-1.4\n');
+  obj(1, () => put('<< /Type /Catalog /Pages 2 0 R >>'));
+  const kids = items.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
+  obj(2, () => put(`<< /Type /Pages /Kids [${kids}] /Count ${items.length} >>`));
+  items.forEach((it, i) => {
+    const pg = 3 + i * 3, im = pg + 1, ct = pg + 2, data = datas[i];
+    obj(pg, () => put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${it.w} ${it.h}] /Resources << /XObject << /Im0 ${im} 0 R >> >> /Contents ${ct} 0 R >>`));
+    obj(im, () => { put(`<< /Type /XObject /Subtype /Image /Width ${it.w} /Height ${it.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${data.length} >>\nstream\n`); put(data); put('\nendstream'); });
+    const cs = `q ${it.w} 0 0 ${it.h} 0 0 cm /Im0 Do Q`;
+    obj(ct, () => put(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`));
+  });
+  const xref = pos;
+  let t = `xref\n0 ${nObj + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= nObj; i++) t += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  put(t + `trailer\n<< /Size ${nObj + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, {type: 'application/pdf'});
+}
 $('copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(promptText()); setStatus('説明文をコピーしました。'); }
+  try { await navigator.clipboard.writeText(promptText(lastAsPdf)); setStatus('説明文をコピーしました。'); }
   catch (e){ setWarn('コピーできませんでした。'); }
 });
 

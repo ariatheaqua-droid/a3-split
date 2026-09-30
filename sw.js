@@ -1,4 +1,4 @@
-const CACHE = 'a3-split-v1';
+const CACHE = 'a3-split-v2';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 const PDFJS = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
