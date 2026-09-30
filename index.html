@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c5a7a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="A3分割">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>A3分割</title>
+<style>
+:root{
+  --bg:#e9eef0; --surface:#f8fafb; --ink:#16252d; --muted:#5b6e78; --line:#c7d2d8;
+  --accent:#0c5a7a; --accent-ink:#ffffff; --result:#dcebf1; --warn:#a4400f; --warn-bg:#fbe9dd;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10191e; --surface:#182329; --ink:#e6eef1; --muted:#93a6af; --line:#2c3b43;
+    --accent:#5fb6d9; --accent-ink:#08222d; --result:#1d3540; --warn:#f0a36f; --warn-bg:#3a2417;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10191e; --surface:#182329; --ink:#e6eef1; --muted:#93a6af; --line:#2c3b43;
+  --accent:#5fb6d9; --accent-ink:#08222d; --result:#1d3540; --warn:#f0a36f; --warn-bg:#3a2417;
+}
+*{box-sizing:border-box}
+html{color-scheme:light dark}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"BIZ UDPGothic","Hiragino Sans","Yu Gothic",Meiryo,sans-serif;font-size:16px;line-height:1.6;padding-inline:16px;padding-block:calc(20px + env(safe-area-inset-top,0px)) calc(40px + env(safe-area-inset-bottom,0px))}
+main{max-width:520px;margin-inline:auto;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:1.5rem;letter-spacing:.04em}
+.sub{margin:2px 0 0;color:var(--muted);font-size:.85rem}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.lbl{display:block;font-size:.8rem;color:var(--muted);letter-spacing:.08em;margin-bottom:6px}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pick input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.btn{display:flex;align-items:center;justify-content:center;text-align:center;min-height:56px;padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:default}
+.pick input:focus-visible+.btn,.btn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{text-align:center;padding:10px 2px;font-weight:700;cursor:pointer;border-left:1px solid var(--line);font-variant-numeric:tabular-nums}
+.seg label:first-of-type{border-left:0}
+.seg input:checked+label{background:var(--accent);color:var(--accent-ink)}
+.seg input:focus-visible+label{outline:3px solid var(--ink);outline-offset:-3px}
+.rotrow{display:flex;gap:12px;align-items:center}
+.rotrow .btn{min-height:44px;flex:0 0 auto;padding-inline:18px}
+.hint{font-size:.78rem;color:var(--muted);margin:0}
+.status{margin:0;font-size:.95rem}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:10px 12px;font-size:.9rem;margin:0;white-space:pre-line}
+.res{background:var(--result);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.res img{display:block;width:100%;height:auto;border-radius:3px;background:#fff}
+.tiles{display:grid;gap:6px}
+.actions{display:flex;flex-direction:column;gap:10px}
+details{font-size:.9rem}
+summary{cursor:pointer;font-weight:700}
+details ul{margin:8px 0 0;padding-left:1.2em}
+[hidden]{display:none!important}
+</style>
+</head>
+<body><main>
+<header>
+  <h1>A3分割</h1>
+  <p class="sub">撮った紙を、Claudeが細かい字まで読めるサイズに分けます。画像はこのiPhoneの中だけで処理されます。</p>
+</header>
+
+<section class="panel">
+  <div>
+    <span class="lbl">1. 読み込む</span>
+    <div class="pick">
+      <input type="file" id="cam" accept="image/*" capture="environment">
+      <label for="cam" class="btn primary">撮影する</label>
+      <input type="file" id="file" accept="image/*,application/pdf">
+      <label for="file" class="btn">写真・PDFから選ぶ</label>
+    </div>
+  </div>
+  <div>
+    <span class="lbl">2. 分け方</span>
+    <div class="seg" role="radiogroup" aria-label="分割数">
+      <input type="radio" name="grid" id="g-auto" value="auto" checked><label for="g-auto">自動</label>
+      <input type="radio" name="grid" id="g-22" value="2x2"><label for="g-22">4枚</label>
+      <input type="radio" name="grid" id="g-32" value="3x2"><label for="g-32">6枚</label>
+      <input type="radio" name="grid" id="g-33" value="3x3"><label for="g-33">9枚</label>
+    </div>
+    <p class="hint" style="margin-top:6px">自動は、写真の画素数に合わせて「Claudeが縮小せずに読める大きさ」になる最少の枚数を選びます。隣り合う画像は約8%ずつ重ねてあります。</p>
+  </div>
+  <div class="rotrow">
+    <button type="button" class="btn" id="rot" disabled>90°回転</button>
+    <span class="hint" id="rotinfo">横向きの図面が縦に写った時に使います</span>
+  </div>
+</section>
+
+<p class="status" id="status" role="status" aria-live="polite">まだ何も読み込んでいません。</p>
+<p class="warn" id="warn" hidden></p>
+
+<section class="res" id="res" hidden>
+  <div>
+    <span class="lbl">全体（1枚目）</span>
+    <div id="overview"></div>
+  </div>
+  <div>
+    <span class="lbl" id="tileslbl">拡大画像</span>
+    <div class="tiles" id="tiles"></div>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn primary" id="share">Claudeへ共有</button>
+    <button type="button" class="btn" id="copy">説明文だけコピー</button>
+    <p class="hint" id="sharehint">共有シートで「Claude」を選んでください。共有と同時に説明文がコピーされるので、Claudeの入力欄に貼り付けてから質問を続けてください。写真アプリに残したい時は「画像を保存」を選びます。</p>
+  </div>
+</section>
+
+<details class="panel">
+  <summary>きれいに読ませる撮り方のコツ</summary>
+  <ul>
+    <li>紙の真上から、紙全体がちょうど画面いっぱいに入るように撮る</li>
+    <li>蛍光灯が紙に映り込まない角度にし、自分の影が落ちないようにする</li>
+    <li>ピントが合ったのを確認してからシャッターを押す（画面の文字をタップすると合わせやすい）</li>
+    <li>メモアプリの書類スキャンを使う場合は、フィルターを「カラー」にしてPDFで共有し、ここの「写真・PDFから選ぶ」で読み込む</li>
+    <li>分割しても、ピンボケや手ブレは直りません。ぼやけていたら撮り直しが一番の近道です</li>
+  </ul>
+</details>
+</main>
+
+<script>
+// Claudeの高解像度入力の上限（長辺2576px・約4784トークン≒3.5MP）に余裕を持たせた値
+const LONG = 2576, AREA = 3.4e6, OV = 0.08, PDF_MAX_PAGES = 5;
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+const ROW_NAMES = {1:[''],2:['上','下'],3:['上','中','下'],4:['上','中上','中下','下']};
+const COL_NAMES = {1:[''],2:['左','右'],3:['左','中','右'],4:['左','中左','中右','右']};
+
+const $ = id => document.getElementById(id);
+let sources = [];   // {prefix, load: async () => ({el, w, h, dispose})}
+let rot = 0;
+let outputs = [];   // {blob, name, url}
+let lastGrid = null;
+let busy = false;
+let loadNote = '';  // 読み込み時の注意（PDFのページ数制限など）
+
+function setStatus(t){ $('status').textContent = t; }
+function setWarn(t){ $('warn').textContent = t || ''; $('warn').hidden = !t; }
+
+function tileSize(W, H, c, r){
+  return [W / (c - OV * (c - 1)), H / (r - OV * (r - 1))];
+}
+function fits(tw, th){ return Math.max(tw, th) <= LONG && tw * th <= AREA; }
+function chooseGrid(W, H, mode){
+  const land = W >= H;
+  const orient = ([a, b]) => land ? [a, b] : [b, a];   // 先の数字を長辺方向に
+  if (mode !== 'auto') return orient(mode.split('x').map(Number));
+  const cands = [[1,1],[2,1],[2,2],[3,2],[3,3],[4,3]];
+  for (const cand of cands){
+    const [c, r] = orient(cand);
+    if (fits(...tileSize(W, H, c, r))) return [c, r];
+  }
+  return orient([4, 4]);
+}
+function starts(total, tile, n){
+  if (n === 1) return [0];
+  return Array.from({length: n}, (_, i) => i * (total - tile) / (n - 1));
+}
+function outScale(w, h){
+  return Math.min(1, LONG / Math.max(w, h), Math.sqrt(AREA / (w * h)));
+}
+
+// 回転後の座標系で (x,y,w,h) を切り出して、上に見出し帯を付けたJPEGにする
+async function renderPart(s, x, y, w, h, label){
+  let k = outScale(w, h), band;
+  // 見出し帯を足しても上限を超えないように縮小率を詰める
+  for (;;){
+    band = Math.round(Math.max(28, w * k * 0.028));
+    if (w * k * (h * k + band) <= AREA && Math.max(w * k, h * k + band) <= LONG) break;
+    k *= 0.99;
+  }
+  const ow = Math.max(1, Math.round(w * k)), oh = Math.max(1, Math.round(h * k));
+  const cv = document.createElement('canvas');
+  cv.width = ow; cv.height = oh + band;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.save();
+  ctx.translate(0, band);
+  ctx.scale(ow / w, oh / h);
+  ctx.translate(-x, -y);
+  if (rot === 90){ ctx.translate(s.h, 0); ctx.rotate(Math.PI / 2); }
+  else if (rot === 180){ ctx.translate(s.w, s.h); ctx.rotate(Math.PI); }
+  else if (rot === 270){ ctx.translate(0, s.w); ctx.rotate(-Math.PI / 2); }
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(s.el, 0, 0);
+  ctx.restore();
+  ctx.fillStyle = '#0c5a7a'; ctx.fillRect(0, 0, ow, band);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${Math.round(band * 0.62)}px "Hiragino Sans", sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, Math.round(band * 0.4), band / 2);
+  const blob = await new Promise((ok, ng) => cv.toBlob(b => b ? ok(b) : ng(new Error('toBlob')), 'image/jpeg', 0.9));
+  cv.width = cv.height = 0;   // iOSのキャンバスメモリを早めに解放
+  return blob;
+}
+
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+async function processAll(){
+  if (!sources.length || busy) return;
+  busy = true; toggle(false);
+  outputs.forEach(o => URL.revokeObjectURL(o.url)); outputs = [];
+  $('overview').innerHTML = ''; $('tiles').innerHTML = '';
+  setWarn('');
+  const mode = document.querySelector('input[name=grid]:checked').value;
+  const st = stamp();
+  let firstGrid = null, lowRes = false;
+  try {
+    for (let pi = 0; pi < sources.length; pi++){
+      const src = sources[pi];
+      setStatus(`処理中…${sources.length > 1 ? `（${pi + 1}/${sources.length}ページ）` : ''}`);
+      const s = await src.load();
+      try {
+      const [W, H] = rot % 180 ? [s.h, s.w] : [s.w, s.h];
+      const [c, r] = chooseGrid(W, H, mode);
+      if (!firstGrid) firstGrid = [c, r];
+      const [tw, th] = tileSize(W, H, c, r);
+      if (outScale(tw, th) < 0.9) lowRes = true;
+      const n = c * r;
+      const ov = await renderPart(s, 0, 0, W, H, `${src.label}全体（${c}列×${r}行に分割）`);
+      outputs.push({blob: ov, name: `a3_${st}_${src.prefix}00_all.jpg`, overview: true, cols: c});
+      let k = 0;
+      for (const y of starts(H, th, r)){
+        for (const x of starts(W, tw, c)){
+          k++;
+          const ri = Math.floor((k - 1) / c), ci = (k - 1) % c;
+          const pos = [ROW_NAMES[r][ri] && ROW_NAMES[r][ri] + '段', COL_NAMES[c][ci]].filter(Boolean).join('・');
+          const b = await renderPart(s, x, y, tw, th, `${src.label}${k}/${n}${pos ? ' ' + pos : ''}`);
+          outputs.push({blob: b, name: `a3_${st}_${src.prefix}${String(k).padStart(2, '0')}.jpg`, cols: c});
+        }
+      }
+      } finally { s.dispose(); }
+    }
+  } catch (e){
+    outputs = []; $('res').hidden = true;
+    setStatus('処理に失敗しました。別の写真で試すか、アプリを開き直してください。');
+    setWarn(String(e && e.message || e));
+    busy = false; toggle(true); $('share').disabled = $('copy').disabled = true; return;
+  }
+  lastGrid = firstGrid;
+  outputs.forEach(o => o.url = URL.createObjectURL(o.blob));
+  showResults();
+  const total = outputs.length;
+  const sizeMB = outputs.reduce((a, o) => a + o.blob.size, 0) / 1048576;
+  setStatus(`${total}枚できました（全体1枚＋拡大${total - sources.length}枚、計${sizeMB.toFixed(1)}MB）。`);
+  const warns = loadNote ? [loadNote] : [];
+  if (total > 20) warns.push('Claudeに一度に送れるのは20枚までです。分け方の枚数を減らすか、2回に分けて送ってください。');
+  if (lowRes) warns.push('この枚数では1枚あたりが大きすぎるため、少し縮小しています。細かい字が読めない時は枚数を増やしてください。');
+  if (firstGrid[0] * firstGrid[1] === 1) warns.push('元の写真が小さいため、分割しなくてもそのまま読める大きさです。細かい字が読めない場合は、紙に近づいて撮り直してください。');
+  setWarn(warns.join('\n'));
+  busy = false; toggle(true);
+}
+
+function showResults(){
+  const ov = outputs.filter(o => o.overview);
+  const tiles = outputs.filter(o => !o.overview);
+  const addImg = (parent, o) => {
+    const a = document.createElement('a');
+    a.href = o.url; a.download = o.name; a.target = '_blank';
+    const img = document.createElement('img');
+    img.src = o.url; img.alt = o.name;
+    a.appendChild(img); parent.appendChild(a);
+  };
+  ov.slice(0, 1).forEach(o => addImg($('overview'), o));
+  $('tiles').style.gridTemplateColumns = `repeat(${tiles[0] ? tiles[0].cols : 1}, 1fr)`;
+  tiles.forEach(o => addImg($('tiles'), o));
+  $('tileslbl').textContent = sources.length > 1
+    ? `拡大画像（${sources.length}ページ分、2枚目以降）` : `拡大画像（2枚目以降、左上から右へ）`;
+  $('res').hidden = false;
+  const canShare = !!(navigator.canShare && navigator.canShare({files: [new File([outputs[0].blob], outputs[0].name, {type: 'image/jpeg'})]}));
+  $('share').hidden = !canShare;
+  if (!canShare) $('sharehint').textContent = 'この環境では共有ボタンが使えません。画像をタップして開き、長押しで保存してください。';
+}
+
+function promptText(){
+  const [c, r] = lastGrid || [2, 2];
+  const pages = sources.length > 1 ? `全${sources.length}ページ分、ページごとに同じ構成です。` : '';
+  return `A3の紙を撮影し、細かい字まで読めるよう分割した画像を送ります。${pages}` +
+    `各ページとも1枚目が全体図で、続く画像は${c}列×${r}行に分けた拡大画像です（左上から右へ、上の段から下の段への順。各画像の上端の帯に位置を書いてあります）。` +
+    `隣り合う画像は約8%重なっているので、境目の文字・寸法・部材を二重に数えないでください。` +
+    `全体図で配置をつかみ、細かい文字や数値は拡大画像を優先して読んでください。`;
+}
+
+function toggle(on){
+  ['rot', 'share', 'copy'].forEach(id => $(id).disabled = !on || !sources.length);
+  document.querySelectorAll('input[name=grid], #cam, #file').forEach(el => el.disabled = !on);
+}
+
+async function loadFile(file){
+  sources.forEach(s => s.release && s.release());
+  sources = []; rot = 0; loadNote = ''; updateRotInfo();
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)){
+    setStatus('PDFを読み込み中…');
+    await loadPdfJs();
+    const doc = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+    const n = Math.min(doc.numPages, PDF_MAX_PAGES);
+    if (doc.numPages > PDF_MAX_PAGES) loadNote = `このPDFは${doc.numPages}ページありますが、最初の${PDF_MAX_PAGES}ページだけ処理しました。`;
+    for (let i = 1; i <= n; i++){
+      sources.push({
+        prefix: n > 1 ? `p${i}_` : '', label: n > 1 ? `${i}ページ目 ` : '',
+        release: i === 1 ? () => doc.destroy() : null,
+        load: async () => {
+          const page = await doc.getPage(i);
+          const v1 = page.getViewport({scale: 1});
+          // iOSのキャンバス上限(約16.7MP)に収まる範囲で、できるだけ細かく描く
+          const sc = Math.min(4200 / Math.max(v1.width, v1.height), Math.sqrt(15e6 / (v1.width * v1.height)));
+          const v = page.getViewport({scale: sc});
+          const cv = document.createElement('canvas');
+          cv.width = Math.floor(v.width); cv.height = Math.floor(v.height);
+          await page.render({canvasContext: cv.getContext('2d'), viewport: v}).promise;
+          return {el: cv, w: cv.width, h: cv.height, dispose(){ cv.width = cv.height = 0; }};
+        }
+      });
+    }
+  } else {
+    setStatus('画像を読み込み中…');
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    try { await new Promise((ok, ng) => { img.onload = ok; img.onerror = ng; img.src = url; }); }
+    catch (e){ URL.revokeObjectURL(url); throw new Error('この画像形式は読み込めませんでした'); }
+    sources.push({
+      prefix: '', label: '', release: () => URL.revokeObjectURL(url),
+      load: async () => ({el: img, w: img.naturalWidth, h: img.naturalHeight, dispose(){}})
+    });
+  }
+}
+
+let pdfJsPromise = null;
+function loadPdfJs(){
+  if (!pdfJsPromise) pdfJsPromise = new Promise((ok, ng) => {
+    const sc = document.createElement('script');
+    sc.src = PDFJS + 'pdf.min.js';
+    sc.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; ok(); };
+    sc.onerror = () => { pdfJsPromise = null; ng(new Error('PDF読み込み部品を取得できませんでした（初回だけネット接続が必要です）')); };
+    document.head.appendChild(sc);
+  });
+  return pdfJsPromise;
+}
+
+function updateRotInfo(){
+  $('rotinfo').textContent = rot ? `今は${rot}°回転しています` : '横向きの図面が縦に写った時に使います';
+}
+
+async function onPick(e){
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  setWarn(''); $('res').hidden = true;
+  try { await loadFile(f); }
+  catch (err){ setStatus('読み込みに失敗しました。'); setWarn(String(err.message || err)); return; }
+  await processAll();
+}
+$('cam').addEventListener('change', onPick);
+$('file').addEventListener('change', onPick);
+document.querySelectorAll('input[name=grid]').forEach(el => el.addEventListener('change', processAll));
+$('rot').addEventListener('click', () => { rot = (rot + 90) % 360; updateRotInfo(); processAll(); });
+
+$('share').addEventListener('click', async () => {
+  const files = outputs.map(o => new File([o.blob], o.name, {type: 'image/jpeg'}));
+  // どちらもタップ直後に呼ぶ必要があるので、コピーの完了は待たずに共有を開く
+  const copied = navigator.clipboard ? navigator.clipboard.writeText(promptText()).then(() => true, () => false) : Promise.resolve(false);
+  try {
+    await navigator.share({files});
+    if (await copied) setStatus('共有しました。説明文もコピー済みなので、Claudeの入力欄に貼り付けてください。');
+    else setStatus('共有しました。説明文はコピーできなかったので、「説明文だけコピー」を押してからClaudeに貼り付けてください。');
+  } catch (e){
+    if (e.name !== 'AbortError') setWarn('共有できませんでした：' + e.message);
+  }
+});
+$('copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(promptText()); setStatus('説明文をコピーしました。'); }
+  catch (e){ setWarn('コピーできませんでした。'); }
+});
+
+toggle(true);
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
